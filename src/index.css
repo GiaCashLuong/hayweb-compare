@@ -1,0 +1,48 @@
+@import '@fontsource-variable/fraunces/index.css';
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-bone text-ink font-body;
+    font-feature-settings: 'lnum' 1, 'tnum' 1;
+    font-variant-numeric: lining-nums tabular-nums;
+    margin: 0;
+  }
+  h1, h2, h3 {
+    font-family: 'Fraunces Variable', Georgia, serif;
+    font-feature-settings: 'lnum' 1, 'tnum' 1, 'ss01' 1;
+    font-variant-numeric: lining-nums tabular-nums;
+    font-variation-settings: 'opsz' 144, 'SOFT' 50;
+    color: #08060d;
+  }
+  h1 { @apply text-4xl md:text-5xl font-medium leading-tight; }
+  h2 { @apply text-2xl md:text-3xl font-medium leading-snug; }
+  h3 { @apply text-xl font-medium; }
+  p  { margin: 0; }
+}
+
+@layer components {
+  .badge-pass { @apply inline-flex items-center gap-1 text-pass font-medium; }
+  .badge-warn { @apply inline-flex items-center gap-1 text-warn font-medium; }
+  .badge-fail { @apply inline-flex items-center gap-1 text-fail font-medium; }
+  .cell-card  { @apply border border-rule rounded-lg p-5 bg-white; }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-5 py-3 bg-ink text-bone font-medium rounded-md transition hover:bg-accent focus:outline-none focus:ring-2 focus:ring-accent;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 border border-rule text-ink font-medium rounded-md transition hover:border-ink;
+  }
+  .input-field {
+    @apply w-full px-4 py-3 border border-rule rounded-md focus:outline-none focus:border-ink text-ink placeholder:text-ink/40;
+  }
+}
