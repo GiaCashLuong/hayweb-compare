@@ -1,0 +1,32 @@
+User-agent: *
+Allow: /
+
+# AI crawler explicit whitelist per CLAUDE.md A.8 Q8 (11-bot 2026 expanded list)
+User-agent: GPTBot
+Allow: /
+User-agent: OAI-SearchBot
+Allow: /
+User-agent: ChatGPT-User
+Allow: /
+User-agent: ClaudeBot
+Allow: /
+User-agent: Claude-User
+Allow: /
+User-agent: Claude-SearchBot
+Allow: /
+User-agent: claude-code
+Allow: /
+User-agent: Googlebot
+Allow: /
+User-agent: Google-Extended
+Allow: /
+User-agent: PerplexityBot
+Allow: /
+User-agent: Perplexity-User
+Allow: /
+
+# Block Bytespider per CLAUDE.md A.8.5 Q12 (mandatory block — 1.4M daily req/site abuse)
+User-agent: Bytespider
+Disallow: /
+
+Sitemap: https://kiem-tra.hayweb.vn/sitemap.xml

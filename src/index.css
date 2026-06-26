@@ -36,8 +36,9 @@
   .badge-warn { @apply inline-flex items-center gap-1 text-warn font-medium; }
   .badge-fail { @apply inline-flex items-center gap-1 text-fail font-medium; }
   .cell-card  { @apply border border-rule rounded-lg p-5 bg-white; }
+  /* S5B 2026-05-20: btn-primary gold (HAYWEB family CTA), navy text for 7:1 contrast */
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 px-5 py-3 bg-ink text-bone font-medium rounded-md transition hover:bg-accent focus:outline-none focus:ring-2 focus:ring-accent;
+    @apply inline-flex items-center justify-center gap-2 px-5 py-3 bg-gold text-navy font-medium rounded-md transition hover:bg-gold-champagne focus:outline-none focus:ring-2 focus:ring-gold-champagne;
   }
   .btn-secondary {
     @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 border border-rule text-ink font-medium rounded-md transition hover:border-ink;

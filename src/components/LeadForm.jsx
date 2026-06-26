@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { supabase } from '../lib/supabase.js';
+import { trackLeadFormSubmit, trackLeadFormValidationError } from '../lib/analytics.js';
 
 const INDUSTRIES = [
   'B2B Services',
@@ -28,12 +29,17 @@ export default function LeadForm({ onClose }) {
 
   const submit = async (e) => {
     e.preventDefault();
-    if (!form.name.trim() || !form.email.trim()) return;
+    if (!form.name.trim() || !form.email.trim()) {
+      trackLeadFormValidationError(!form.name.trim() ? 'name' : 'email', 'required');
+      return;
+    }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
+      trackLeadFormValidationError('email', 'invalid_format');
       setErrorMsg('Email không hợp lệ.');
       return;
     }
     if (form.zalo && !/^0[0-9]{9,10}$/.test(form.zalo.replace(/\s/g, ''))) {
+      trackLeadFormValidationError('zalo', 'invalid_format');
       setErrorMsg('Số Zalo không hợp lệ.');
       return;
     }
@@ -58,6 +64,7 @@ export default function LeadForm({ onClose }) {
       setErrorMsg('Có lỗi xảy ra. Thử lại hoặc liên hệ qua Zalo 0xxx.');
       return;
     }
+    trackLeadFormSubmit(form.industry || 'unspecified');
     setStatus('success');
   };
 

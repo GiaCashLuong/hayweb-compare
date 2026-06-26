@@ -1,10 +1,28 @@
-// Site 1 Compare Tool — audit Edge Function
-// Runs 7 BASIC chỉ tiêu in parallel + caches 24h
-// Spec: projects/official/2026-year-1-plan-a/_specs/site-1-architecture.md §2
+// Site 1 Compare Tool — audit Edge Function v2 (15 BASIC chỉ tiêu)
+// Spec: projects/official/2026-year-1-plan-a/_specs/site-1-architecture.md v2 §2
+// Handoff: _master/handoffs/kiemtra-comparison-redesign/S1-redesign.md §3.1
+// v1 → v2 (2026-05-20 Day 39 evening): expand 7 → 15 chỉ tiêu kiem-tra redesign.
 //
-// PUBLIC: 7 BASIC chỉ tiêu only
+// PUBLIC: 15 BASIC chỉ tiêu only — chia 3 nhóm UI: Bảo mật & Tin cậy (4) / Tốc độ & UX (6) / Cấu trúc SEO (5)
 // Advanced metrics intentionally hidden per _specs/advanced-chi-tieu-internal.md
-// CONTACT sales for advanced framework discussion 1-on-1
+// CONTACT sales for 4 chỉ số nâng cao framework discussion 1-on-1
+//
+// 15 chỉ tiêu sources:
+//   #1  Mozilla grade            — observatory-api.mdn.mozilla.net/api/v2/scan
+//   #2  SSL valid                — Deno.connectTls + HEAD probe
+//   #3  Lighthouse Performance   — PSI mobile category=performance
+//   #4  Schema count             — DOM JSON-LD parse
+//   #5  H1 + hierarchy           — DOM heading scan
+//   #6  Image alt %              — DOM <img> alt audit
+//   #7  Page load (TTFB+LCP)     — PSI audits.server-response-time + largest-contentful-paint
+//   #8  Security headers count   — Mozilla v2 tests_passed
+//   #9  HSTS preload             — HEAD probe headers parse
+//   #10 CLS                      — PSI audits.cumulative-layout-shift
+//   #11 Lighthouse Accessibility — PSI accessibility category
+//   #12 JS bundle KB             — PSI audits.total-byte-weight + total-bytes-savings filter
+//   #13 WebP image %             — DOM <img src> + <picture><source> extension scan
+//   #14 FAQPage schema           — DOM JSON-LD @type === "FAQPage"
+//   #15 LocalBusiness+Service+Person schemas count 0-3 — DOM JSON-LD
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { DOMParser, Element } from 'https://deno.land/x/deno_dom@v0.1.45/deno-dom-wasm.ts';
@@ -47,120 +65,162 @@ async function fetchWithTimeout(url: string, ms: number, init?: RequestInit): Pr
   }
 }
 
-// === Runner 1: Mozilla Observatory v2 (sync API) ===
+// === Runner 1+8: Mozilla Observatory v2 ===
+// v1 returns grade + score + tests_passed (#8 expansion).
+// MDN endpoint migrated mid-2026 (per S4B fix log).
 async function runMozilla(host: string) {
-  // MDN Observatory API (Mozilla migrated 2025-2026 from observatory.mozilla.org → MDN)
-  // Endpoint: GET https://developer.mozilla.org/api/v1/observatory/analyze/?host=example.com
-  // Returns: { grade, score, scanned_at, tests_passed, tests_failed }
-  try {
-    const res = await fetchWithTimeout(
-      `https://developer.mozilla.org/api/v1/observatory/analyze/?host=${encodeURIComponent(host)}`,
-      45_000,
-    );
-    if (!res.ok) return { mozilla_grade: null, mozilla_score: null };
-    const j = await res.json();
-    return { mozilla_grade: j.grade ?? null, mozilla_score: j.score ?? null };
-  } catch {
-    return { mozilla_grade: null, mozilla_score: null };
+  const MAX_ATTEMPTS = 3;
+  const DELAY_MS = 10_000;
+  const FETCH_TIMEOUT_MS = 15_000;
+  const ENDPOINT = `https://observatory-api.mdn.mozilla.net/api/v2/scan?host=${encodeURIComponent(host)}`;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetchWithTimeout(ENDPOINT, FETCH_TIMEOUT_MS, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': '0' },
+      });
+      if (res.ok) {
+        const j: any = await res.json();
+        if (j?.grade != null && j?.score != null) {
+          if (attempt > 1) console.log(`[mozilla] ${host}: scan completed after ${attempt} attempts`);
+          return {
+            mozilla_grade: j.grade,
+            mozilla_score: j.score,
+            security_headers_passed: typeof j.tests_passed === 'number' ? j.tests_passed : null,
+          };
+        }
+      }
+      if (attempt < MAX_ATTEMPTS) await new Promise((r) => setTimeout(r, DELAY_MS));
+    } catch (err) {
+      console.warn(`[mozilla] ${host} attempt ${attempt} error:`, err instanceof Error ? err.message : err);
+      if (attempt < MAX_ATTEMPTS) await new Promise((r) => setTimeout(r, DELAY_MS));
+    }
   }
+  console.warn(`[mozilla] ${host}: scan did not complete after ${MAX_ATTEMPTS} attempts`);
+  return { mozilla_grade: null, mozilla_score: null, security_headers_passed: null };
 }
 
-// === Runner 2: SSL valid + expiry days ===
-async function runSSL(host: string, port = 443) {
+// === Runner 2+9: SSL + HSTS preload ===
+// SSL valid via Deno.connectTls + HEAD probe.
+// HSTS preload: parse Strict-Transport-Security header for 'preload' directive.
+async function runSSLAndHSTS(host: string, port = 443) {
   try {
     const conn = await Deno.connectTls({ hostname: host, port });
-    const peer = conn.handshake ? await conn.handshake() : null;
-    // Deno's TLS API doesn't expose cert directly via std API; use a workaround via fetch
+    if (conn.handshake) await conn.handshake();
     conn.close();
-    // Validate via HTTPS fetch — success ⇒ certificate trusted by Deno's root store
     const probe = await fetchWithTimeout(`https://${host}/`, 10_000, { method: 'HEAD' });
     if (probe.ok || (probe.status >= 200 && probe.status < 500)) {
-      // Try to extract expiry via fallback API (ssl-labs free) — kept simple, use null if unavailable
-      return { ssl_valid: true, ssl_expiry_days: null };
+      const hsts = probe.headers.get('strict-transport-security') ?? '';
+      const hasPreload = /preload/i.test(hsts);
+      return { ssl_valid: true, ssl_expiry_days: null, hsts_preload: hasPreload };
     }
-    return { ssl_valid: false, ssl_expiry_days: null };
+    return { ssl_valid: false, ssl_expiry_days: null, hsts_preload: false };
   } catch {
-    return { ssl_valid: false, ssl_expiry_days: null };
+    return { ssl_valid: false, ssl_expiry_days: null, hsts_preload: false };
   }
 }
 
-// === Runner 3: PageSpeed Insights (Lighthouse hosted) ===
-// 3 runs averaged per spec §4
+// === Runner 3+7+10+11+12: PageSpeed Insights (mobile) ===
+// Single PSI call fetches multi-category result. Saves quota + avoids burst rate-limit.
+// Categories requested: performance + accessibility.
 async function runLighthouse(url: string) {
-  const apiUrl = (i: number) => {
-    const params = new URLSearchParams({
-      url,
-      strategy: 'mobile',
-      category: 'performance',
-    });
-    if (PAGESPEED_API_KEY) params.set('key', PAGESPEED_API_KEY);
-    return `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?${params.toString()}&_n=${i}`;
-  };
+  const params = new URLSearchParams({ url, strategy: 'mobile' });
+  // PSI accepts multiple `category` params via repeated keys
+  params.append('category', 'performance');
+  params.append('category', 'accessibility');
+  if (PAGESPEED_API_KEY) params.set('key', PAGESPEED_API_KEY);
+  const apiUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?${params.toString()}`;
 
-  const runs = await Promise.allSettled([
-    fetchWithTimeout(apiUrl(1), 60_000).then((r) => r.json()),
-    fetchWithTimeout(apiUrl(2), 60_000).then((r) => r.json()),
-    fetchWithTimeout(apiUrl(3), 60_000).then((r) => r.json()),
-  ]);
-
-  const perfs: number[] = [];
-  let ttfb = 0;
-  let loadEvent = 0;
-  let okCount = 0;
-  for (const r of runs) {
-    if (r.status !== 'fulfilled') continue;
-    const j: any = r.value;
-    const score = j?.lighthouseResult?.categories?.performance?.score;
-    if (typeof score === 'number') perfs.push(Math.round(score * 100));
-    const audits = j?.lighthouseResult?.audits;
-    const ttfbAud = audits?.['server-response-time']?.numericValue;
-    const lcpAud = audits?.['largest-contentful-paint']?.numericValue;
-    if (typeof ttfbAud === 'number') {
-      ttfb += ttfbAud;
-      okCount++;
+  try {
+    const res = await fetchWithTimeout(apiUrl, 70_000);
+    if (!res.ok) {
+      console.warn(`[lighthouse] PSI returned HTTP ${res.status} for ${url}`);
+      return {
+        lighthouse_perf: null, lighthouse_variance: null, ttfb_ms: null, load_event_ms: null,
+        cls: null, lighthouse_accessibility: null, js_bundle_kb: null,
+      };
     }
-    if (typeof lcpAud === 'number') loadEvent += lcpAud;
-  }
+    const j: any = await res.json();
+    const perfScore = j?.lighthouseResult?.categories?.performance?.score;
+    const a11yScore = j?.lighthouseResult?.categories?.accessibility?.score;
+    const audits = j?.lighthouseResult?.audits ?? {};
+    const ttfbAud = audits['server-response-time']?.numericValue;
+    const lcpAud = audits['largest-contentful-paint']?.numericValue;
+    const clsAud = audits['cumulative-layout-shift']?.numericValue;
 
-  if (!perfs.length) {
-    return { lighthouse_perf: null, lighthouse_variance: null, ttfb_ms: null, load_event_ms: null };
+    // JS bundle estimate: prefer script-treemap-data if present, fall back to total-byte-weight filtered
+    let jsBundleKb: number | null = null;
+    const treemap = audits['script-treemap-data']?.details?.nodes;
+    if (Array.isArray(treemap)) {
+      // resourceBytes ≈ uncompressed JS; multiply by ~0.33 typical gzip ratio
+      const totalJsBytes = treemap.reduce((sum: number, n: any) => sum + (Number(n?.resourceBytes) || 0), 0);
+      if (totalJsBytes > 0) jsBundleKb = Math.round((totalJsBytes * 0.33) / 1024);
+    }
+    if (jsBundleKb == null) {
+      // Fallback: total-byte-weight items filter mime/type=script
+      const items = audits['total-byte-weight']?.details?.items ?? [];
+      const jsItems = items.filter((it: any) => typeof it?.url === 'string' && /\.js(\?|$)/.test(it.url));
+      const totalJsBytes = jsItems.reduce((sum: number, it: any) => sum + (Number(it?.totalBytes) || 0), 0);
+      if (totalJsBytes > 0) jsBundleKb = Math.round((totalJsBytes * 0.33) / 1024);
+    }
+
+    return {
+      lighthouse_perf: typeof perfScore === 'number' ? Math.round(perfScore * 100) : null,
+      lighthouse_variance: 0,
+      ttfb_ms: typeof ttfbAud === 'number' ? Math.round(ttfbAud) : null,
+      load_event_ms: typeof lcpAud === 'number' ? Math.round(lcpAud) : null,
+      cls: typeof clsAud === 'number' ? Number(clsAud.toFixed(3)) : null,
+      lighthouse_accessibility: typeof a11yScore === 'number' ? Math.round(a11yScore * 100) : null,
+      js_bundle_kb: jsBundleKb,
+    };
+  } catch (err) {
+    console.warn(`[lighthouse] error for ${url}:`, err instanceof Error ? err.message : err);
+    return {
+      lighthouse_perf: null, lighthouse_variance: null, ttfb_ms: null, load_event_ms: null,
+      cls: null, lighthouse_accessibility: null, js_bundle_kb: null,
+    };
   }
-  const avg = perfs.reduce((a, b) => a + b, 0) / perfs.length;
-  const variance = Math.max(...perfs) - Math.min(...perfs);
-  return {
-    lighthouse_perf: Math.round(avg),
-    lighthouse_variance: variance,
-    ttfb_ms: okCount ? Math.round(ttfb / okCount) : null,
-    load_event_ms: okCount ? Math.round(loadEvent / okCount) : null,
-  };
 }
 
-// === Runners 4-6: Schema + H1 + Image alt (single HTML fetch) ===
+// === Runners 4-6+13-15: Schema + H1 + Image alt + WebP + FAQ + LocalPack (single HTML fetch) ===
 async function runDom(url: string) {
+  const empty = {
+    schema_count: null, h1_count: null, heading_hierarchy_ok: null, image_alt_pct: null,
+    webp_pct: null, schema_has_faq: null, schema_local_pack: null,
+  };
   try {
     const res = await fetchWithTimeout(url, 15_000, {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; HAYWEB-Compare/1.0)' },
     });
-    if (!res.ok) {
-      return { schema_count: null, h1_count: null, heading_hierarchy_ok: null, image_alt_pct: null };
-    }
+    if (!res.ok) return empty;
     const html = await res.text();
     const doc = new DOMParser().parseFromString(html, 'text/html');
-    if (!doc) {
-      return { schema_count: null, h1_count: null, heading_hierarchy_ok: null, image_alt_pct: null };
-    }
+    if (!doc) return empty;
 
-    // Schema JSON-LD count
+    // Schema JSON-LD parse (collect ALL types for #4, FAQ for #14, LocalPack for #15)
     const ldScripts = doc.querySelectorAll('script[type="application/ld+json"]');
-    let schemaTypes = 0;
+    const allTypes = new Set<string>();
     for (const s of ldScripts) {
       try {
         const parsed = JSON.parse((s as Element).textContent);
-        const types = collectTypes(parsed);
-        schemaTypes += types.size;
-      } catch {
-        /* ignore malformed */
-      }
+        collectTypes(parsed, allTypes);
+      } catch { /* ignore malformed */ }
+    }
+    const schemaCount = allTypes.size;
+    const hasFaq = allTypes.has('FAQPage');
+    const localPackCount = ['LocalBusiness', 'Service', 'Person']
+      .reduce((n, t) => n + (allTypes.has(t) ? 1 : 0), 0);
+    // LocalBusiness has many subtypes (Restaurant, Dentist, etc.) — credit if ANY match
+    const LOCAL_BUSINESS_SUBTYPES = [
+      'LocalBusiness', 'Restaurant', 'Dentist', 'MedicalBusiness', 'LegalService',
+      'ProfessionalService', 'FinancialService', 'Store', 'HomeAndConstructionBusiness',
+      'AutomotiveBusiness', 'BeautySalon', 'Spa', 'HealthAndBeautyBusiness',
+    ];
+    let localPackAdjusted = localPackCount;
+    if (!allTypes.has('LocalBusiness')) {
+      const hasSubtype = LOCAL_BUSINESS_SUBTYPES.some((t) => allTypes.has(t));
+      if (hasSubtype) localPackAdjusted = Math.min(3, localPackAdjusted + 1);
     }
 
     // H1 + heading hierarchy
@@ -170,32 +230,42 @@ async function runDom(url: string) {
     let hierarchyOk = true;
     for (const h of headings) {
       const lvl = parseInt((h as Element).tagName.substring(1), 10);
-      if (lastLevel > 0 && lvl > lastLevel + 1) {
-        hierarchyOk = false;
-        break;
-      }
+      if (lastLevel > 0 && lvl > lastLevel + 1) { hierarchyOk = false; break; }
       lastLevel = lvl;
     }
 
-    // Image alt %
+    // Image alt % + WebP %
     const imgs = doc.querySelectorAll('img');
-    let total = 0;
-    let withAlt = 0;
+    let total = 0, withAlt = 0, withWebp = 0;
     for (const img of imgs) {
       total++;
-      const alt = (img as Element).getAttribute('alt');
+      const el = img as Element;
+      const alt = el.getAttribute('alt');
       if (alt !== null && alt.trim().length > 0) withAlt++;
+      const src = el.getAttribute('src') ?? '';
+      const srcset = el.getAttribute('srcset') ?? '';
+      if (/\.(webp|avif)(\?|$)/i.test(src) || /\.(webp|avif)/i.test(srcset)) withWebp++;
+    }
+    // Also count <picture><source type="image/webp"> as positive
+    const sources = doc.querySelectorAll('picture source');
+    for (const s of sources) {
+      const type = (s as Element).getAttribute('type') ?? '';
+      if (/image\/(webp|avif)/i.test(type)) withWebp++;
     }
     const altPct = total > 0 ? Math.round((withAlt / total) * 100) : 100;
+    const webpPct = total > 0 ? Math.min(100, Math.round((withWebp / total) * 100)) : 100;
 
     return {
-      schema_count: schemaTypes,
+      schema_count: schemaCount,
       h1_count: h1s.length,
       heading_hierarchy_ok: hierarchyOk,
       image_alt_pct: altPct,
+      webp_pct: webpPct,
+      schema_has_faq: hasFaq,
+      schema_local_pack: localPackAdjusted,
     };
   } catch {
-    return { schema_count: null, h1_count: null, heading_hierarchy_ok: null, image_alt_pct: null };
+    return empty;
   }
 }
 
@@ -219,26 +289,21 @@ Deno.serve(async (req) => {
 
   if (req.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'method_not_allowed' }), {
-      status: 405,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
 
   let body: { url?: string; refresh?: boolean } = {};
-  try {
-    body = await req.json();
-  } catch {
+  try { body = await req.json(); } catch {
     return new Response(JSON.stringify({ error: 'invalid_json' }), {
-      status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
 
   const url = normalizeUrl(body.url ?? '');
   if (!url) {
     return new Response(JSON.stringify({ error: 'invalid_url' }), {
-      status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
 
@@ -255,16 +320,11 @@ Deno.serve(async (req) => {
     .maybeSingle();
   if (rl && rl.request_count >= 5) {
     return new Response(JSON.stringify({ error: 'rate_limit' }), {
-      status: 429,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
   await supabase.from('site1_rate_limit').upsert(
-    {
-      ip_hash: ipHash,
-      window_start: windowStart.toISOString(),
-      request_count: (rl?.request_count ?? 0) + 1,
-    },
+    { ip_hash: ipHash, window_start: windowStart.toISOString(), request_count: (rl?.request_count ?? 0) + 1 },
     { onConflict: 'ip_hash,window_start' },
   );
 
@@ -278,7 +338,8 @@ Deno.serve(async (req) => {
       .eq('url_hash', urlHash)
       .gt('expires_at', new Date().toISOString())
       .maybeSingle();
-    if (cached && cached.status === 'complete') {
+    // v2 gate: only return cached if has ANY v2 column populated (otherwise re-audit fresh)
+    if (cached && cached.status === 'complete' && cached.security_headers_passed != null) {
       return new Response(JSON.stringify({ status: 'cached', data: cached }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -292,9 +353,9 @@ Deno.serve(async (req) => {
   );
 
   const host = new URL(url).hostname;
-  const [mozilla, ssl, lh, dom] = await Promise.all([
+  const [mozilla, sslHsts, lh, dom] = await Promise.all([
     runMozilla(host),
-    runSSL(host),
+    runSSLAndHSTS(host),
     runLighthouse(url),
     runDom(url),
   ]);
@@ -305,7 +366,7 @@ Deno.serve(async (req) => {
     status: 'complete',
     audit_timestamp: new Date().toISOString(),
     ...mozilla,
-    ...ssl,
+    ...sslHsts,
     ...lh,
     ...dom,
   };

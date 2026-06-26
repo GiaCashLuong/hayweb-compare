@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import BrandBar from './components/BrandBar.jsx';
 import ComparisonGrid from './components/ComparisonGrid.jsx';
 import CTASection from './components/CTASection.jsx';
 import LeadForm from './components/LeadForm.jsx';
@@ -25,12 +26,15 @@ function App() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <header className="border-b border-rule">
+      <BrandBar current="kiem-tra" />
+      {/* S5B 2026-05-20: header gold-hairline top strip + hayweb.vn link gold-champagne for HAYWEB family signal */}
+      <header className="border-b border-rule relative">
+        <div className="absolute top-0 left-0 right-0 h-px bg-gold/40" aria-hidden="true" />
         <div className="max-w-container mx-auto px-5 md:px-8 py-4 flex items-center justify-between">
           <a href="/" className="font-headline text-2xl tracking-tight">
             <span className="italic">HAYWEB</span> <span className="text-ink/40 text-base">Compare</span>
           </a>
-          <a href="https://hayweb.vn" className="text-sm text-ink/60 hover:text-ink">
+          <a href="https://hayweb.vn" className="text-sm text-ink/60 hover:text-gold-deep transition-colors">
             hayweb.vn ↗
           </a>
         </div>
